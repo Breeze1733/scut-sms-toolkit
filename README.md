@@ -40,7 +40,7 @@
 
 ### 1. 登录官网
 
-打开 [华南理工大学学生信息管理系统 (SMS)](https://sms.scut.edu.cn/)
+打开 [华南理工大学学生信息管理系统 (SMS)](https://sms.scut.edu.cn/)（校外访问可直接打开 [华工 WebVPN 入口](https://sms-443.webvpn.scut.edu.cn/)）
 
 使用统一认证登录，等待网页加载完成。
 
@@ -93,3 +93,4 @@
 ## 许可协议
 
 本项目基于 [MIT License](LICENSE) 开源。
+

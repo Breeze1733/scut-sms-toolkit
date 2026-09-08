@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         SCUT 学工系统-综测数据工具箱(ZIP导出+加权均分Excel)
 // @namespace    https://github.com/Breeze1733/scut-sms-toolkit
-// @version      2.3.0
+// @version      2.3.1
 // @description  SCUT 学工系统综测辅助工具：支持全班CSV打包ZIP导出、自动解析成绩计算加权平均分并导出Excel（单次计算自动生成“必修课＋选修课”与“仅必修课”两个Sheet）
 // @author       Breeze1733
 // @license      MIT
 // @match        https://sms.scut.edu.cn/*
+// @match        https://sms-443.webvpn.scut.edu.cn/*
 // @icon         https://sms.scut.edu.cn/favicon.ico
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
@@ -374,3 +375,4 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 })();
+
