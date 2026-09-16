@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         SCUT 学工系统-综测数据工具箱(ZIP导出+加权均分Excel)
+// @name         SCUT 学工系统-综测数据工具箱(ZIP导出+加权均分+综测总分Excel)
 // @namespace    https://github.com/Breeze1733/scut-sms-toolkit
-// @version      2.3.1
-// @description  SCUT 学工系统综测辅助工具：支持全班CSV打包ZIP导出、自动解析成绩计算加权平均分并导出Excel（单次计算自动生成“必修课＋选修课”与“仅必修课”两个Sheet）
+// @version      2.4.0
+// @description  SCUT 学工系统综测辅助工具：全班CSV打包ZIP导出、加权平均分Excel导出(双Sheet)、读取学生申请分数计算综测总成绩(X/C/S)导出Excel
 // @author       Breeze1733
 // @license      MIT
 // @match        https://sms.scut.edu.cn/*
@@ -50,8 +50,16 @@
         gpaBtn.style.cssText = getButtonStyle('#007bff');
         gpaBtn.onclick = startCalcWeightedGPA;
 
+        // 功能三按钮：读取学生申请分数计算综测总成绩并导出 Excel
+        const evalBtn = document.createElement('button');
+        evalBtn.id = 'scut-calc-eval-btn';
+        evalBtn.innerText = '📈 计算综测总成绩 (Excel)';
+        evalBtn.style.cssText = getButtonStyle('#fd7e14');
+        evalBtn.onclick = startCalcComprehensiveEval;
+
         container.appendChild(zipBtn);
         container.appendChild(gpaBtn);
+        container.appendChild(evalBtn);
         document.body.appendChild(container);
     }
 
@@ -118,6 +126,258 @@
             }
             return { studentId, studentName, url };
         }).filter(item => item.url !== null);
+    }
+
+    // ================= 功能三：读取学生申请分数计算综测总成绩并导出 Excel =================
+    async function startCalcComprehensiveEval() {
+        if (typeof XLSX === 'undefined') {
+            alert('SheetJS 库未加载完成，请稍后刷新重试！');
+            return;
+        }
+
+        const items = getTargetListRows();
+        if (items.length === 0) {
+            alert('未检测到包含“查看”操作的数据行，请确认处于学工系统学生列表页面！');
+            return;
+        }
+
+        const btn = document.getElementById('scut-calc-eval-btn');
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+
+        // 表头字段
+        const excelRows = [
+            [
+                '学号',
+                '姓名',
+                '学业成绩积分(X)',
+                '操行评定基本分',
+                '操行评定加分',
+                '操行评定积分(C)',
+                '德育积分',
+                '智育积分',
+                '体育积分',
+                '美育积分',
+                '劳育积分',
+                '综合素养评定积分(S)',
+                '综测总成绩'
+            ]
+        ];
+
+        for (let i = 0; i < items.length; i++) {
+            const { studentId, studentName, url } = items[i];
+            btn.innerText = `⏳ 计算中 (${i + 1}/${items.length})：${studentName}`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const htmlText = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlText, 'text/html');
+
+                // 提取学号与姓名
+                const pageText = doc.body.innerText;
+                const idMatch = pageText.match(/学号[：:]\s*([0-9A-Za-z]+)/);
+                const nameMatch = pageText.match(/姓名[：:]\s*([^\s]+)/);
+                const actualId = idMatch ? idMatch[1].trim() : studentId;
+                const actualName = nameMatch ? nameMatch[1].trim() : studentName;
+
+                const tables = Array.from(doc.querySelectorAll('table'));
+
+                // 1. 计算学业成绩积分 X（复用功能二：必修课＋选修课加权平均分，排除通选课）
+                let gradeTable = null;
+                let scoreCol = -1;
+                let creditCol = -1;
+                let typeCol = -1;
+
+                for (const t of tables) {
+                    const trs = Array.from(t.querySelectorAll('tr'));
+                    for (const r of trs) {
+                        const texts = Array.from(r.querySelectorAll('th, td')).map(cell => cell.innerText.trim());
+                        const sIdx = texts.findIndex(txt => txt === '成绩');
+                        const cIdx = texts.findIndex(txt => txt === '学分');
+                        const tIdx = texts.findIndex(txt => txt.includes('课程类型') || txt === '类型' || txt.includes('课程性质'));
+
+                        if (sIdx !== -1 && cIdx !== -1 && texts.some(txt => txt.includes('课程名称'))) {
+                            gradeTable = t;
+                            scoreCol = sIdx;
+                            creditCol = cIdx;
+                            typeCol = tIdx;
+                            break;
+                        }
+                    }
+                    if (gradeTable) break;
+                }
+
+                let weightBoth = 0;
+                let creditBoth = 0;
+                if (gradeTable) {
+                    const rows = Array.from(gradeTable.querySelectorAll('tr'));
+                    for (const r of rows) {
+                        const cells = Array.from(r.querySelectorAll('td'));
+                        if (cells.length <= Math.max(scoreCol, creditCol)) continue;
+
+                        let isBoth = true;
+                        if (typeCol !== -1 && cells.length > typeCol) {
+                            const courseType = cells[typeCol].innerText.trim();
+                            const hasRequired = courseType.includes('必修') && !courseType.includes('通选');
+                            const hasElective = courseType.includes('选修') && !courseType.includes('通选');
+                            isBoth = hasRequired || hasElective;
+                        }
+
+                        const scoreVal = extractScore(cells[scoreCol].innerText);
+                        const creditVal = parseFloat(cells[creditCol].innerText.trim());
+
+                        if (scoreVal !== null && !isNaN(scoreVal) && !isNaN(creditVal) && creditVal > 0) {
+                            if (isBoth) {
+                                weightBoth += scoreVal * creditVal;
+                                creditBoth += creditVal;
+                            }
+                        }
+                    }
+                }
+                const X = creditBoth > 0 ? Number((weightBoth / creditBoth).toFixed(2)) : 0.00;
+
+                // 2. 解析各评定模块的学生申请分数 / 学生评分
+                const scores = {
+                    conduct_base: 0,
+                    conduct_add: 0,
+                    moral: 0,
+                    intellectual: 0,
+                    sports: 0,
+                    arts: 0,
+                    labor: 0
+                };
+
+                for (const table of tables) {
+                    if (table === gradeTable) continue;
+
+                    // 识别当前模块标题
+                    const container = table.closest('.panel, .panel-default, .card, [class*="panel"], div');
+                    const heading = container?.querySelector('h1, h2, h3, h4, h5, h6, .panel-heading, .panel-title');
+                    const divHeading = table.closest('div')?.querySelector('h4, h5, .panel-heading, .panel-title');
+                    const prevText = table.previousElementSibling ? table.previousElementSibling.innerText : '';
+                    const title = ((heading ? heading.innerText : '') + ' ' + (divHeading ? divHeading.innerText : '') + ' ' + prevText).trim();
+
+                    let cat = null;
+                    if (title.includes('0201') || title.includes('操行评定基本分') || title.includes('操行基本分')) {
+                        cat = 'conduct_base';
+                    } else if (title.includes('0202') || title.includes('操行评定加分') || title.includes('操行加分')) {
+                        cat = 'conduct_add';
+                    } else if (title.includes('0301') || title.includes('德育')) {
+                        cat = 'moral';
+                    } else if ((title.includes('0302') || title.includes('智育')) && !title.includes('学业')) {
+                        cat = 'intellectual';
+                    } else if (title.includes('0303') || title.includes('体育')) {
+                        cat = 'sports';
+                    } else if (title.includes('0304') || title.includes('美育')) {
+                        cat = 'arts';
+                    } else if (title.includes('0305') || title.includes('劳育')) {
+                        cat = 'labor';
+                    }
+
+                    if (cat && scores.hasOwnProperty(cat)) {
+                        const trs = Array.from(table.querySelectorAll('tr'));
+                        let scoreColIdx = -1;
+
+                        for (const tr of trs) {
+                            const cells = Array.from(tr.querySelectorAll('th, td'));
+                            const texts = cells.map(c => c.innerText.trim());
+
+                            if (texts.includes('序号') || texts.some(t => t.includes('学生申请分数') || t.includes('学生评分'))) {
+                                scoreColIdx = texts.findIndex(t => t.includes('学生申请分数') || t.includes('学生评分'));
+                                continue;
+                            }
+
+                            if (scoreColIdx !== -1 && cells.length > scoreColIdx) {
+                                const val = extractScore(cells[scoreColIdx].innerText);
+                                if (val !== null && !isNaN(val)) {
+                                    scores[cat] += val;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. 计算操行评定积分 (C) = 操行评定基本分 + 操行评定加分
+                const baseScore = Number(scores.conduct_base.toFixed(2));
+                const addScore = Number(scores.conduct_add.toFixed(2));
+                const C = Number((baseScore + addScore).toFixed(2));
+
+                // 4. 计算综合素养评定积分 (S) = 德育积分 + 3 * 智育积分 + 体育积分 + 美育积分 + 劳育积分
+                const moralScore = Number(scores.moral.toFixed(2));
+                const intelScore = Number(scores.intellectual.toFixed(2));
+                const sportsScore = Number(scores.sports.toFixed(2));
+                const artsScore = Number(scores.arts.toFixed(2));
+                const laborScore = Number(scores.labor.toFixed(2));
+                const S = Number((moralScore + 3 * intelScore + sportsScore + artsScore + laborScore).toFixed(2));
+
+                // 5. 计算综测成绩 = 0.7X + 0.1C + 0.2S
+                const totalScore = Number((0.7 * X + 0.1 * C + 0.2 * S).toFixed(2));
+
+                excelRows.push([
+                    actualId,
+                    actualName,
+                    X,
+                    baseScore,
+                    addScore,
+                    C,
+                    moralScore,
+                    intelScore,
+                    sportsScore,
+                    artsScore,
+                    laborScore,
+                    S,
+                    totalScore
+                ]);
+
+                await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (err) {
+                console.error(`[-] 获取 ${studentName} 综测数据失败:`, err);
+                excelRows.push([
+                    studentId,
+                    studentName,
+                    '计算失败',
+                    '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'
+                ]);
+            }
+        }
+
+        btn.innerText = '📑 正在导出 Excel...';
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(excelRows);
+        ws['!cols'] = [
+            { wch: 16 }, // 学号
+            { wch: 12 }, // 姓名
+            { wch: 16 }, // 学业成绩积分(X)
+            { wch: 15 }, // 操行评定基本分
+            { wch: 15 }, // 操行评定加分
+            { wch: 16 }, // 操行评定积分(C)
+            { wch: 12 }, // 德育积分
+            { wch: 12 }, // 智育积分
+            { wch: 12 }, // 体育积分
+            { wch: 12 }, // 美育积分
+            { wch: 12 }, // 劳育积分
+            { wch: 20 }, // 综合素养评定积分(S)
+            { wch: 14 }  // 综测总成绩
+        ];
+        XLSX.utils.book_append_sheet(wb, ws, "综测成绩汇总");
+
+        const today = new Date().toISOString().slice(0, 10);
+        XLSX.writeFile(wb, `全班综测成绩汇总_${today}.xlsx`);
+
+        btn.innerText = '✅ 综测成绩导出完成';
+        btn.style.opacity = '1';
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerText = '📈 计算综测总成绩 (Excel)';
+        }, 3000);
     }
 
     // ================= 功能二：遍历计算加权平均分并导出 Excel（双 Sheet） =================
