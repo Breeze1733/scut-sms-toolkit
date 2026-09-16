@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SCUT 学工系统-综测数据工具箱(ZIP导出+加权均分+综测总分Excel)
 // @namespace    https://github.com/Breeze1733/scut-sms-toolkit
-// @version      2.4.0
+// @version      2.4.1
 // @description  SCUT 学工系统综测辅助工具：全班CSV打包ZIP导出、加权平均分Excel导出(双Sheet)、读取学生申请分数计算综测总成绩(X/C/S)导出Excel
 // @author       Breeze1733
 // @license      MIT
@@ -77,6 +77,18 @@
             transition: opacity 0.2s;
             outline: none;
         `;
+    }
+
+    // 获取本地格式化时间戳 YYYY-MM-DD_HH-mm (加入时分 HH-MinMin)
+    function getFormattedTimestamp() {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const year = now.getFullYear();
+        const month = pad(now.getMonth() + 1);
+        const day = pad(now.getDate());
+        const hour = pad(now.getHours());
+        const minute = pad(now.getMinutes());
+        return `${year}-${month}-${day}_${hour}-${minute}`;
     }
 
     // 提取成绩数字（支持纯数字及 "优秀（95.0）"、"良好(85.0)" 格式）
@@ -310,7 +322,9 @@
                 const C = Number((baseScore + addScore).toFixed(2));
 
                 // 4. 计算综合素养评定积分 (S) = 德育积分 + 3 * 智育积分 + 体育积分 + 美育积分 + 劳育积分
-                const moralScore = Number(scores.moral.toFixed(2));
+                // 德育积分封顶 25 分
+                const rawMoralScore = Number(scores.moral.toFixed(2));
+                const moralScore = Math.min(25, rawMoralScore);
                 const intelScore = Number(scores.intellectual.toFixed(2));
                 const sportsScore = Number(scores.sports.toFixed(2));
                 const artsScore = Number(scores.arts.toFixed(2));
@@ -369,8 +383,8 @@
         ];
         XLSX.utils.book_append_sheet(wb, ws, "综测成绩汇总");
 
-        const today = new Date().toISOString().slice(0, 10);
-        XLSX.writeFile(wb, `全班综测成绩汇总_${today}.xlsx`);
+        const timestamp = getFormattedTimestamp();
+        XLSX.writeFile(wb, `全班综测成绩汇总_${timestamp}.xlsx`);
 
         btn.innerText = '✅ 综测成绩导出完成';
         btn.style.opacity = '1';
@@ -526,8 +540,8 @@
         wsRequired['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 15 }];
         XLSX.utils.book_append_sheet(wb, wsRequired, "仅必修课");
 
-        const today = new Date().toISOString().slice(0, 10);
-        XLSX.writeFile(wb, `全班加权平均分汇总_${today}.xlsx`);
+        const timestamp = getFormattedTimestamp();
+        XLSX.writeFile(wb, `全班加权平均分汇总_${timestamp}.xlsx`);
 
         btn.innerText = '✅ Excel 导出完成(双Sheet)';
         btn.style.opacity = '1';
@@ -555,7 +569,8 @@
         btn.style.opacity = '0.6';
 
         const zip = new JSZip();
-        const folderName = `综测导出_${new Date().toISOString().slice(0, 10)}`;
+        const timestamp = getFormattedTimestamp();
+        const folderName = `综测导出_${timestamp}`;
         const folder = zip.folder(folderName);
         let successCount = 0;
 
