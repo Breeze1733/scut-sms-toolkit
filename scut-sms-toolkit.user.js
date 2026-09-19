@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SCUT 学工系统-综测数据工具箱(ZIP导出+加权均分+综测总分Excel)
 // @namespace    https://github.com/Breeze1733/scut-sms-toolkit
-// @version      2.4.1
-// @description  SCUT 学工系统综测辅助工具：全班CSV打包ZIP导出、加权平均分Excel导出(双Sheet)、读取学生申请分数计算综测总成绩(X/C/S)导出Excel
+// @version      2.5.0
+// @description  SCUT 学工系统综测辅助工具：全班CSV打包ZIP导出、加权平均分Excel导出(3个Sheet)、读取班级通过学业成绩与学生申请分数计算综测总成绩(X/C/S)导出Excel
 // @author       Breeze1733
 // @license      MIT
 // @match        https://sms.scut.edu.cn/*
@@ -43,7 +43,7 @@
         zipBtn.style.cssText = getButtonStyle('#28a745');
         zipBtn.onclick = startBatchExportZIP;
 
-        // 功能二按钮：加权均分Excel导出（一次性计算双模式输出两个Sheet）
+        // 功能二按钮：加权均分Excel导出（一次性计算多模式输出3个Sheet）
         const gpaBtn = document.createElement('button');
         gpaBtn.id = 'scut-calc-gpa-btn';
         gpaBtn.innerText = '📊 计算加权平均分 (Excel)';
@@ -201,7 +201,7 @@
 
                 const tables = Array.from(doc.querySelectorAll('table'));
 
-                // 1. 计算学业成绩积分 X（复用功能二：必修课＋选修课加权平均分，排除通选课）
+                // 1. 计算学业成绩积分 X（取该行含有“班级通过”的课程加权均分）
                 let gradeTable = null;
                 let scoreCol = -1;
                 let creditCol = -1;
@@ -226,34 +226,28 @@
                     if (gradeTable) break;
                 }
 
-                let weightBoth = 0;
-                let creditBoth = 0;
+                let weightPassed = 0;
+                let creditPassed = 0;
                 if (gradeTable) {
                     const rows = Array.from(gradeTable.querySelectorAll('tr'));
                     for (const r of rows) {
                         const cells = Array.from(r.querySelectorAll('td'));
                         if (cells.length <= Math.max(scoreCol, creditCol)) continue;
 
-                        let isBoth = true;
-                        if (typeCol !== -1 && cells.length > typeCol) {
-                            const courseType = cells[typeCol].innerText.trim();
-                            const hasRequired = courseType.includes('必修') && !courseType.includes('通选');
-                            const hasElective = courseType.includes('选修') && !courseType.includes('通选');
-                            isBoth = hasRequired || hasElective;
-                        }
+                        // 仅计入包含“班级通过”的行
+                        const isClassPassed = r.innerText.includes('班级通过') || cells.some(td => td.innerText.includes('班级通过'));
+                        if (!isClassPassed) continue;
 
                         const scoreVal = extractScore(cells[scoreCol].innerText);
                         const creditVal = parseFloat(cells[creditCol].innerText.trim());
 
                         if (scoreVal !== null && !isNaN(scoreVal) && !isNaN(creditVal) && creditVal > 0) {
-                            if (isBoth) {
-                                weightBoth += scoreVal * creditVal;
-                                creditBoth += creditVal;
-                            }
+                            weightPassed += scoreVal * creditVal;
+                            creditPassed += creditVal;
                         }
                     }
                 }
-                const X = creditBoth > 0 ? Number((weightBoth / creditBoth).toFixed(2)) : 0.00;
+                const X = creditPassed > 0 ? Number((weightPassed / creditPassed).toFixed(2)) : 0.00;
 
                 // 2. 解析各评定模块的学生申请分数 / 学生评分
                 const scores = {
@@ -394,7 +388,7 @@
         }, 3000);
     }
 
-    // ================= 功能二：遍历计算加权平均分并导出 Excel（双 Sheet） =================
+    // ================= 功能二：遍历计算加权平均分并导出 Excel（3个 Sheet） =================
     async function startCalcWeightedGPA() {
         if (typeof XLSX === 'undefined') {
             alert('SheetJS 库未加载完成，请稍后刷新重试！');
@@ -411,7 +405,10 @@
         btn.disabled = true;
         btn.style.opacity = '0.6';
 
-        // 分别准备两个 Sheet 的数据行：表头三列均为【姓名、加权平均分、学分总数】
+        // 分别准备三个 Sheet 的数据行：表头三列均为【姓名、加权平均分、学分总数】
+        const excelRowsClassPassed = [
+            ['姓名', '加权平均分', '学分总数']
+        ];
         const excelRowsBoth = [
             ['姓名', '加权平均分', '学分总数']
         ];
@@ -465,11 +462,15 @@
                     if (gradeTable) break;
                 }
 
-                // 范围1：必修课 + 选修课（排除通选课）
+                // 范围1：那一行含有“班级通过”
+                let weightPassed = 0;
+                let creditPassed = 0;
+
+                // 范围2：必修课 + 选修课（排除通选课）
                 let weightBoth = 0;
                 let creditBoth = 0;
 
-                // 范围2：仅必修课（排除选修及通选课）
+                // 范围3：仅必修课（排除选修及通选课）
                 let weightRequired = 0;
                 let creditRequired = 0;
 
@@ -478,6 +479,8 @@
                     for (const r of rows) {
                         const cells = Array.from(r.querySelectorAll('td'));
                         if (cells.length <= Math.max(scoreCol, creditCol)) continue;
+
+                        const isClassPassed = r.innerText.includes('班级通过') || cells.some(td => td.innerText.includes('班级通过'));
 
                         let isRequired = true;
                         let isBoth = true;
@@ -495,6 +498,10 @@
                         const creditVal = parseFloat(cells[creditCol].innerText.trim());
 
                         if (scoreVal !== null && !isNaN(scoreVal) && !isNaN(creditVal) && creditVal > 0) {
+                            if (isClassPassed) {
+                                weightPassed += scoreVal * creditVal;
+                                creditPassed += creditVal;
+                            }
                             if (isBoth) {
                                 weightBoth += scoreVal * creditVal;
                                 creditBoth += creditVal;
@@ -506,6 +513,11 @@
                         }
                     }
                 }
+
+                // 记录【班级通过】成绩
+                const avgPassed = creditPassed > 0 ? Number((weightPassed / creditPassed).toFixed(2)) : 0.00;
+                const roundedCreditPassed = Number(creditPassed.toFixed(2));
+                excelRowsClassPassed.push([actualName, avgPassed, roundedCreditPassed]);
 
                 // 记录【必修+选修】成绩
                 const avgBoth = creditBoth > 0 ? Number((weightBoth / creditBoth).toFixed(2)) : 0.00;
@@ -521,6 +533,7 @@
                 await new Promise(resolve => setTimeout(resolve, 300));
             } catch (err) {
                 console.error(`[-] 获取 ${studentName} 成绩失败:`, err);
+                excelRowsClassPassed.push([studentName, '计算失败', '-']);
                 excelRowsBoth.push([studentName, '计算失败', '-']);
                 excelRowsRequiredOnly.push([studentName, '计算失败', '-']);
             }
@@ -530,12 +543,17 @@
 
         const wb = XLSX.utils.book_new();
 
-        // Sheet 1: 必修课＋选修课
+        // Sheet 1: 班级通过
+        const wsPassed = XLSX.utils.aoa_to_sheet(excelRowsClassPassed);
+        wsPassed['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 15 }];
+        XLSX.utils.book_append_sheet(wb, wsPassed, "班级通过");
+
+        // Sheet 2: 必修课＋选修课
         const wsBoth = XLSX.utils.aoa_to_sheet(excelRowsBoth);
         wsBoth['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 15 }];
         XLSX.utils.book_append_sheet(wb, wsBoth, "必修课＋选修课");
 
-        // Sheet 2: 仅必修课
+        // Sheet 3: 仅必修课
         const wsRequired = XLSX.utils.aoa_to_sheet(excelRowsRequiredOnly);
         wsRequired['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 15 }];
         XLSX.utils.book_append_sheet(wb, wsRequired, "仅必修课");
@@ -543,7 +561,7 @@
         const timestamp = getFormattedTimestamp();
         XLSX.writeFile(wb, `全班加权平均分汇总_${timestamp}.xlsx`);
 
-        btn.innerText = '✅ Excel 导出完成(双Sheet)';
+        btn.innerText = '✅ Excel 导出完成(3个Sheet)';
         btn.style.opacity = '1';
         setTimeout(() => {
             btn.disabled = false;
